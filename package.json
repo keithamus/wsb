@@ -1,6 +1,9 @@
 {
   "name": "wsb",
   "version": "1.0.0",
+  "bin": {
+    "wsb": "./index.js"
+  },
   "description": "A simple web server that you can broadcast websocket messages with",
   "main": "index.js",
   "dependencies": {
