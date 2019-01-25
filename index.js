@@ -135,3 +135,5 @@ server.on('request', (req, res) => {
 
 server.listen(port)
 console.log('wsb listening on', port)
+
+module.exports = server
