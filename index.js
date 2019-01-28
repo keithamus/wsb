@@ -76,44 +76,11 @@ server.on('upgrade', (req, sock, head) => {
   })
 })
 
-const urlParamsToJson = url => {
-  const payload = {}
-  for(const [k,v] of url.searchParams) payload[k] = v
-  return payload
-}
-
-const broadcast = (req, res, payload) => {
-  log('--> broadcast ', payload)
-  wss.clients.forEach(client => client.readyState === WebSocket.OPEN ? client.send(payload) : payload)
-  res.write(payload)
-  return res.end()
-}
-
-const serveFile = (req, res, filePath, start = Date.now()) => {
-  fs.readFile(filePath, (error, content) => {
-    if (error) {
-      if (waitForStatic && Date.now() - start < waitForStatic) {
-        return setTimeout(serveFile, 100, req, res, filePath, start)
-      }
-      log('could not read', filePath, error)
-      if(error.code == 'ENOENT') {
-        res.writeHead(404, { 'Content-Type': 'text/plain' })
-        res.end(`Not found`, 'utf-8')
-      } else {
-        res.writeHead(500)
-        res.end(`File could not be read`)
-      }
-    } else {
-      log('--> static ', filePath)
-      const extname = String(path.extname(filePath)).toLowerCase()
-      res.writeHead(200, { 'Content-Type': mimeTypes[extname] || 'application/octet-stream' })
-      res.end(content, 'utf-8')
-    }
-  })
-}
-
-const defaultIndex = (req, res) => {
-  log('--> default index ')
+const baseHandler = (req, res, next, error) => {
+  log('--> default')
+  if (!error) error = Object.assign(new Error(`Could not ${req.method} ${req.url.pathname}`), { status: 404 })
+  if (error.code === 'ENOENT') res.writeHead(404)
+  if (error.status) res.writeHead(error.status)
   res.write(`<!DOCTYPE html>
     <script>
       console.log('opening websocket')
@@ -121,17 +88,68 @@ const defaultIndex = (req, res) => {
       ws.addEventListener('open', e => console.log('open', e))
       ws.addEventListener('message', e => console.log('data', e, JSON.parse(e.data)))
     </script>
+    <pre>${error && error.stack}</pre>
   `)
   res.end()
 }
-
+const middlewares = []
+server.add = cb => (middlewares.push(cb), server)
 server.on('request', (req, res) => {
-  const url = new URL('http://wsb' + req.url)
-  log('<-- ', req.url)
-  if (url.pathname === '/b') return broadcast(req, res, JSON.stringify(urlParamsToJson(url), null, 2))
-  if (static) return serveFile(req, res, path.join(static, url.pathname === '/' ? '/index.html' : url.pathname))
-  return defaultIndex(req, res)
+  req.url = new URL(`http://${req.headers.host || `localhost:${port}`}${req.url}`)
+  log('<-- ', req.method, req.url.toString())
+  const stack = middlewares.filter(m => m.length < 4)
+  const errorStack = middlewares.filter(m => m.length === 4)
+  const next = error => {
+    const middleware = error ? errorStack.shift() : stack.shift()
+    if (!middleware) return baseHandler(req, res, next, error)
+    try {
+      middleware(req, res, next, error)
+    } catch(error) {
+      (errorStack.pop() || baseHandler)(req, res, next, error)
+    }
+  }
+  next()
 })
+
+server.add((req, res, next) => {
+  if (req.url.pathname !== '/b') return next()
+  const payload = {}
+  for(const [k,v] of req.url.searchParams) payload[k] = v
+  log('--> broadcast ', payload)
+  wss.clients.forEach(client => client.readyState === WebSocket.OPEN ? client.send(JSON.stringify(payload)) : payload)
+  res.write(JSON.stringify(payload, null, 2))
+  return res.end()
+})
+
+if (static) {
+  const waitForFile = (file, timeout) => {
+    return new Promise((resolve, reject) => {
+      const start = Date.now()
+      const tryFile = () => {
+        if (Date.now() - start > timeout) return reject(new Error('timeout'))
+        fs.access(file, error => {
+          if (!error) return resolve(file)
+          if (error.code !== 'ENOENT') return reject(error)
+          setTimeout(tryFile, 100)
+        })
+      }
+      tryFile()
+    })
+  }
+  server.add((req, res, next) => {
+    log('--> static')
+    const file = path.join(static, req.url.pathname)
+    let prom = Promise.resolve()
+    if (waitForStatic) {
+      prom = prom.then(() => log(`waiting for ${file} for ${waitForStatic / 1000}s`) || waitForFile(file, waitForStatic))
+    }
+    prom.then(() => {
+      const extname = String(path.extname(req.url.pathname)).toLowerCase()
+      res.writeHead(200, { 'Content-Type': mimeTypes[extname] || 'application/octet-stream' })
+      fs.createReadStream(file).on('error', next).pipe(res)
+    }).catch(next)
+  })
+}
 
 server.listen(port)
 console.log('wsb listening on', port)
