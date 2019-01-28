@@ -131,14 +131,12 @@ server.add((req, res, next) => {
 if (pausableStatic) {
   let resolver
   server.add((req, res, next) => {
-    console.log('pause?', req.url.pathname)
     if (req.url.pathname !== '/pause') return next()
     log('--> pausing')
     paused = new Promise(resolve => resolver = resolve)
     res.end('pausing static server')
   })
   server.add((req, res, next) => {
-    console.log('unpause?', req.url.pathname)
     if (req.url.pathname !== '/unpause') return next()
     log('--> unpausing')
     resolver()
