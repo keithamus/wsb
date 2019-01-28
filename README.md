@@ -20,7 +20,7 @@ $ curl 'localhost:3342/b?foo=bar'
 ## Usage
 
 ```
-Usage: wbr [options]
+Usage: wsb [options]
 
 Options:
   --help, -h         Show help                                            [boolean]

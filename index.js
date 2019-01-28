@@ -34,7 +34,7 @@ for (let i = 0; i < argv.length; i += 1) {
     case '--help':
     case '-h':
       console.log(`
-Usage: wbr [options]
+Usage: wsb [options]
 
 Options:
   --help, -h         Show help                                            [boolean]
