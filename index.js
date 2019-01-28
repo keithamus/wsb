@@ -25,6 +25,8 @@ let log = Function.prototype
 let port = parseInt(process.env.PORT) || 8080
 let static = ''
 let waitForStatic = 0
+let pausableStatic = false
+let paused = Promise.resolve()
 
 const argv = process.argv.slice(2)
 for (let i = 0; i < argv.length; i += 1) {
@@ -40,6 +42,7 @@ Options:
   --verbose          Add some logging about what the server is doing      [boolean]
   --port, -p         Start the server running on this port (default 8080)  [number]
   --static           Serve static files from this directory                [string]
+  --pauseable-static Make a static server that can be paused via the API   [string]
   --wait-for-static  If the file can't be found, keep trying until this    [number]
                      amount of ms has passed.
 `.trim())
@@ -58,6 +61,10 @@ Options:
       break
     case '--wait-for-static':
       waitForStatic = parseInt(argv[(i += 1)])
+      break
+    case '--pausable-static':
+      static = path.resolve(argv[(i += 1)])
+      pausableStatic = true
       break
     case '--verbose':
       log = console.log
@@ -121,6 +128,24 @@ server.add((req, res, next) => {
   return res.end()
 })
 
+if (pausableStatic) {
+  let resolver
+  server.add((req, res, next) => {
+    console.log('pause?', req.url.pathname)
+    if (req.url.pathname !== '/pause') return next()
+    log('--> pausing')
+    paused = new Promise(resolve => resolver = resolve)
+    res.end('pausing static server')
+  })
+  server.add((req, res, next) => {
+    console.log('unpause?', req.url.pathname)
+    if (req.url.pathname !== '/unpause') return next()
+    log('--> unpausing')
+    resolver()
+    res.end('unpausing static server')
+  })
+}
+
 if (static) {
   const waitForFile = (file, timeout) => {
     return new Promise((resolve, reject) => {
@@ -140,6 +165,9 @@ if (static) {
     log('--> static')
     const file = path.join(static, req.url.pathname)
     let prom = Promise.resolve()
+    if (pausableStatic) {
+      prom = prom.then(() => log(`waiting for server to unpause`) || paused)
+    }
     if (waitForStatic) {
       prom = prom.then(() => log(`waiting for ${file} for ${waitForStatic / 1000}s`) || waitForFile(file, waitForStatic))
     }
