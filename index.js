@@ -54,7 +54,7 @@ Options:
       port = parseInt(argv[(i += 1)])
       break
     case '--static':
-      static = path.resolve(static)
+      static = path.resolve(argv[(i += 1)])
       break
     case '--wait-for-static':
       waitForStatic = parseInt(argv[(i += 1)])
