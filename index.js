@@ -70,6 +70,7 @@ Options:
       log = console.log
       break
     default:
+      throw new Error(`unknown option ${argv[i]}`)
       break
   }
 }
