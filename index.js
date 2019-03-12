@@ -2,6 +2,7 @@
 const WebSocket = require('ws')
 const http = require('http')
 const URL = require('url').URL
+const {createGzip} = require('zlib')
 const path = require('path')
 const fs = require('fs')
 const mimeTypes = {
@@ -20,12 +21,14 @@ const mimeTypes = {
     '.otf': 'application/font-otf',
     '.svg': 'application/image/svg+xml'
 }
+const compressable = ['.html', '.js', '.css', '.json']
 
 let log = Function.prototype
 let port = parseInt(process.env.PORT) || 8080
 let static = ''
 let waitForStatic = 0
 let pausableStatic = false
+let compress = false
 let paused = Promise.resolve()
 
 const argv = process.argv.slice(2)
@@ -68,6 +71,10 @@ Options:
       break
     case '--verbose':
       log = console.log
+      break
+    case '-c':
+    case '--compress':
+      compress = true
       break
     default:
       throw new Error(`unknown option ${argv[i]}`)
@@ -172,8 +179,14 @@ if (static) {
     }
     prom.then(() => {
       const extname = String(path.extname(req.url.pathname)).toLowerCase()
+      let stream = fs.createReadStream(file).on('error', next)
+      const acceptHeader = req.headers['accept-encoding'] || ''
+      if (compress && acceptHeader.includes('gzip') && compressable.includes(extname)) {
+        res.setHeader('Content-Encoding', 'gzip')
+        stream = stream.pipe(createGzip({}))
+      }
       res.writeHead(200, { 'Content-Type': mimeTypes[extname] || 'application/octet-stream' })
-      fs.createReadStream(file).on('error', next).pipe(res)
+      stream.pipe(res)
     }).catch(next)
   })
 }
