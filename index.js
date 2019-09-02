@@ -157,10 +157,13 @@ if (static) {
     return new Promise((resolve, reject) => {
       const start = Date.now()
       const tryFile = () => {
-        if (Date.now() - start > timeout) return reject(new Error('timeout'))
         fs.access(file, error => {
           if (!error) return resolve(file)
           if (error.code !== 'ENOENT') return reject(error)
+          if (Date.now() - start > timeout) {
+            error.message = `Timed out waiting for ${file}`
+            return reject(error)
+          }
           setTimeout(tryFile, 100)
         })
       }
