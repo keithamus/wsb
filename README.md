@@ -23,14 +23,18 @@ $ curl 'localhost:3342/b?foo=bar'
 Usage: wsb [options]
 
 Options:
-  --help, -h         Show help                                            [boolean]
-  --version, -V, -v  Show version number                                  [boolean]
-  --verbose          Add some logging about what the server is doing      [boolean]
-  --port, -p         Start the server running on this port (default 8080)  [number]
-  --static           Serve static files from this directory                [string]
-  --pauseable-static Make a static server that can be paused via the API   [string]
-  --wait-for-static  If the file can't be found, keep trying until this    [number]
-                     amount of ms has passed.
+  --help, -h          Show help                                            [boolean]
+  --version, -V, -v   Show version number                                  [boolean]
+  --verbose           Add some logging about what the server is doing      [boolean]
+  --port, -p          Start the server running on this port (default 8080)  [number]
+  --static            Serve static files from this directory                [string]
+  --pauseable-static  Make a static server that can be paused via the API   [string]
+  --wait-for-static   If the file can't be found, keep trying until this    [number]
+                      amount of ms has passed.
+  --wait-for-lockfile Will hang any requests when a `*.lock` file is        [number]
+                      present, until a number of ms has passed. `.ext.lock`
+                      files can be used to prevent specific files, e.g.
+                      `foo.css.lock` will only hang on `*.css` files.
 ```
 
 
@@ -112,5 +116,66 @@ $ curl localhost:8080/unpause
 pausing static server
 
 Response from Job 2 (curl)
+hello world!
+```
+
+### wait-for-lockfile
+
+Switching this feature on will make the server hang if there are any `.lock`
+files inside the static directory.
+
+So if you pass `--static path/to/static --wait-for-lockfile 10000`, then assets
+will be served from `path/to/static` as normal, _unless_ a file like
+`path/to/static/*.lock` exists. If that file exists, the server will hang until
+that file is removed. This is useful for having compilers touch a `.lock` file
+at the beginning of their compile, and removing it after they're done.
+
+In addition to this, lockfiles with two extensions will lock _only extensions
+that match_. For example a `foo.css.lock` file will only prevent `.css` files
+from being immediately served, so for example files with a `.js` extension will
+still be served.
+
+Here's an example:
+
+```
+# Run the server in the background
+$ wsb -p 8080 --static . --wait-for-lockfile 6000 &
+
+$ echo 'hello world!' > index.html
+
+# Try curling for a file that exists:
+$ curl localhost:8080/index.html
+hello world!
+
+
+# Now add a lockfile and watch it hang:
+
+$ touch compiler.lock
+
+$ curl localhost:8080/index.html
+
+Ctrl+z
+
+# Now if you remove the lockfile any requests will finally complete:
+$ rm compiler.lock
+
+Response from Job 2 (curl):
+hello world!
+
+# Try a `compiler.css.lock` file and see it has no effect on html files:
+
+$ echo 'I am CSS!' > index.css
+$ touch compiler.css.lock
+$ curl localhost:8080/index.html
+hello world!
+
+# But css files it does:
+$ curl localhost:8080/index.css
+
+Ctrl+z
+
+$ rm compiler.css.lock
+
+Response from Job 2 (curl):
 hello world!
 ```

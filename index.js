@@ -23,10 +23,44 @@ const mimeTypes = {
 }
 const compressable = ['.html', '.js', '.css', '.json']
 
+const fileExists = (file, exists = true) => new Promise((resolve, reject) => {
+  fs.access(file, (err) => {
+    if (err && err.code === 'ENOENT') return resolve(!exists)
+    if (err) return reject(err)
+    return resolve(exists)
+  })
+})
+
+const delay = ms => new Promise((resolve) => setTimeout(resolve, ms))
+
+const waitForFilePresence = (file, timeoutMs, exists = true) => new Promise((resolve, reject) => {
+  const start = Date.now()
+  const check = () => fileExists(file, exists).then(pass => {
+    if (Date.now() > (start + timeoutMs)) return reject(new Error(`Timed out waiting for ${file}`))
+    if (pass) return resolve(pass)
+    setTimeout(check, 100)
+  })
+  check()
+})
+
+const waitForLockfile = (file, timeoutMs) => new Promise((resolve, reject) => {
+  fs.readdir(static, (err, files) => {
+    if (err) return reject(err)
+    resolve(files.filter(lockFile => {
+      if (path.extname(lockFile) !== '.lock') return false
+      subextension = path.extname(path.basename(lockFile, '.lock'))
+      return (!subextension || subextension === path.extname(file))
+    }))
+  })
+}).then(lockFiles => lockFiles
+  .map(lockFile => waitForFilePresence(path.join(static, lockFile), timeoutMs, false))
+)
+
 let log = Function.prototype
 let port = parseInt(process.env.PORT) || 8080
 let static = ''
 let waitForStatic = 0
+let waitForLockfiles = 0
 let pausableStatic = false
 let compress = false
 let paused = Promise.resolve()
@@ -40,14 +74,18 @@ for (let i = 0; i < argv.length; i += 1) {
 Usage: wsb [options]
 
 Options:
-  --help, -h         Show help                                            [boolean]
-  --version, -V, -v  Show version number                                  [boolean]
-  --verbose          Add some logging about what the server is doing      [boolean]
-  --port, -p         Start the server running on this port (default 8080)  [number]
-  --static           Serve static files from this directory                [string]
-  --pauseable-static Make a static server that can be paused via the API   [string]
-  --wait-for-static  If the file can't be found, keep trying until this    [number]
-                     amount of ms has passed.
+  --help, -h          Show help                                            [boolean]
+  --version, -V, -v   Show version number                                  [boolean]
+  --verbose           Add some logging about what the server is doing      [boolean]
+  --port, -p          Start the server running on this port (default 8080)  [number]
+  --static            Serve static files from this directory                [string]
+  --pauseable-static  Make a static server that can be paused via the API   [string]
+  --wait-for-static   If the file can't be found, keep trying until this    [number]
+                      amount of ms has passed.
+  --wait-for-lockfile Will hang any requests when a \`*.lock\` file is        [number]
+                      present, until a number of ms has passed. \`.ext.lock\`
+                      files can be used to prevent specific files, e.g.
+                      \`foo.css.lock\` will only hang on \`*.css\` files.
 `.trim())
       process.exit(1)
     case '--version':
@@ -64,6 +102,9 @@ Options:
       break
     case '--wait-for-static':
       waitForStatic = parseInt(argv[(i += 1)])
+      break
+    case '--wait-for-lockfile':
+      waitForLockfiles = parseInt(argv[(i += 1)])
       break
     case '--pausable-static':
       static = path.resolve(argv[(i += 1)])
@@ -153,23 +194,6 @@ if (pausableStatic) {
 }
 
 if (static) {
-  const waitForFile = (file, timeout) => {
-    return new Promise((resolve, reject) => {
-      const start = Date.now()
-      const tryFile = () => {
-        fs.access(file, error => {
-          if (!error) return resolve(file)
-          if (error.code !== 'ENOENT') return reject(error)
-          if (Date.now() - start > timeout) {
-            error.message = `Timed out waiting for ${file}`
-            return reject(error)
-          }
-          setTimeout(tryFile, 100)
-        })
-      }
-      tryFile()
-    })
-  }
   server.add((req, res, next) => {
     log('--> static')
     const file = path.join(static, req.url.pathname)
@@ -177,8 +201,18 @@ if (static) {
     if (pausableStatic) {
       prom = prom.then(() => log(`waiting for server to unpause`) || paused)
     }
+    if (waitForLockfiles) {
+      prom = prom
+        .then(() => waitForLockfile(file, waitForLockfiles))
+        .then(lockPromises => {
+          if (lockPromises.length) {
+            log(`waiting for ${lockPromises.length} lock files before serving (for ${waitForLockfiles / 1000}s)`)
+            return Promise.all(lockPromises)
+          }
+        })
+    }
     if (waitForStatic) {
-      prom = prom.then(() => log(`waiting for ${file} for ${waitForStatic / 1000}s`) || waitForFile(file, waitForStatic))
+      prom = prom.then(() => log(`waiting for ${file} for ${waitForStatic / 1000}s`) || waitForFilePresence(file, waitForStatic))
     }
     prom.then(() => {
       const extname = String(path.extname(req.url.pathname)).toLowerCase()
