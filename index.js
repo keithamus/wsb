@@ -5,6 +5,8 @@ const URL = require('url').URL
 const {createGzip} = require('zlib')
 const path = require('path')
 const fs = require('fs')
+const promisify = require('util').promisify
+const accessAsync = promisify(fs.access)
 const mimeTypes = {
     '.html': 'text/html',
     '.js': 'text/javascript',
@@ -22,45 +24,26 @@ const mimeTypes = {
     '.svg': 'application/image/svg+xml'
 }
 const compressable = ['.html', '.js', '.css', '.json']
-
-const fileExists = (file, exists = true) => new Promise((resolve, reject) => {
-  fs.access(file, (err) => {
-    if (err && err.code === 'ENOENT') return resolve(!exists)
-    if (err) return reject(err)
-    return resolve(exists)
-  })
-})
-
+const isCompressable = file => compressable.includes(path.extname(file))
+const existsAsync = async (file) => {
+  try {
+    await accessAsync(file)
+  } catch(err) {
+    if (err && err.code === 'ENOENT') {
+      return false
+    } else if (err) {
+      throw err
+    }
+  }
+  return true
+}
 const delay = ms => new Promise((resolve) => setTimeout(resolve, ms))
-
-const waitForFilePresence = (file, timeoutMs, exists = true) => new Promise((resolve, reject) => {
-  const start = Date.now()
-  const check = () => fileExists(file, exists).then(pass => {
-    if (Date.now() > (start + timeoutMs)) return reject(new Error(`Timed out waiting for ${file}`))
-    if (pass) return resolve(pass)
-    setTimeout(check, 100)
-  })
-  check()
-})
-
-const waitForLockfile = (file, timeoutMs) => new Promise((resolve, reject) => {
-  fs.readdir(static, (err, files) => {
-    if (err) return reject(err)
-    resolve(files.filter(lockFile => {
-      if (path.extname(lockFile) !== '.lock') return false
-      subextension = path.extname(path.basename(lockFile, '.lock'))
-      return (!subextension || subextension === path.extname(file))
-    }))
-  })
-}).then(lockFiles => lockFiles
-  .map(lockFile => waitForFilePresence(path.join(static, lockFile), timeoutMs, false))
-)
 
 let log = Function.prototype
 let port = parseInt(process.env.PORT) || 8080
 let static = ''
-let waitForStatic = 0
-let waitForLockfiles = 0
+let waitForStaticTimeout = 0
+let waitForLockfilesTimeout = 0
 let pausableStatic = false
 let compress = false
 let paused = Promise.resolve()
@@ -101,17 +84,17 @@ Options:
       static = path.resolve(argv[(i += 1)])
       break
     case '--wait-for-static':
-      waitForStatic = parseInt(argv[(i += 1)])
+      waitForStaticTimeout = parseInt(argv[(i += 1)])
       break
     case '--wait-for-lockfile':
-      waitForLockfiles = parseInt(argv[(i += 1)])
+      waitForLockfilesTimeout = parseInt(argv[(i += 1)])
       break
     case '--pausable-static':
       static = path.resolve(argv[(i += 1)])
       pausableStatic = true
       break
     case '--verbose':
-      log = console.log
+      log = console.error
       break
     case '-c':
     case '--compress':
@@ -155,16 +138,16 @@ server.on('request', (req, res) => {
   log('<-- ', req.method, req.url.toString())
   const stack = middlewares.filter(m => m.length < 4)
   const errorStack = middlewares.filter(m => m.length === 4)
-  const next = error => {
-    const middleware = error ? errorStack.shift() : stack.shift()
-    if (!middleware) return baseHandler(req, res, next, error)
-    try {
-      middleware(req, res, next, error)
-    } catch(error) {
-      (errorStack.pop() || baseHandler)(req, res, next, error)
+  const next = async error => {
+    if (error) {
+      const middleware = errorStack.shift() || baseHandler
+      await middleware(req, res, next, error)
+    } else {
+      const middleware = stack.shift() || baseHandler
+      await middleware(req, res, next)
     }
   }
-  next()
+  next().catch(next)
 })
 
 server.add((req, res, next) => {
@@ -194,41 +177,54 @@ if (pausableStatic) {
 }
 
 if (static) {
-  server.add((req, res, next) => {
+  server.add(async (req, res, next) => {
     log('--> static')
     const file = path.join(static, req.url.pathname)
-    let prom = Promise.resolve()
+    const fileExtension = path.extname(file)
     if (pausableStatic) {
-      prom = prom.then(() => log(`waiting for server to unpause`) || paused)
+      log(`waiting for server to unpause`)
+      await paused
+      log(`server has unpaused`)
     }
-    if (waitForLockfiles) {
-      prom = prom
-        .then(() => waitForLockfile(file, waitForLockfiles))
-        .then(lockPromises => {
-          if (lockPromises.length) {
-            log(`waiting for ${lockPromises.length} lock files before serving (for ${waitForLockfiles / 1000}s)`)
-            return Promise.all(lockPromises)
-          }
+    if (waitForLockfilesTimeout) {
+      const start = Date.now()
+      let hasLockFiles = true
+      while(hasLockFiles) {
+        if (Date.now() - start > waitForLockfilesTimeout) {
+          throw new Error(`timed out waiting for lock files to be removed`)
+        }
+        hasLockFiles = await readdirAsync(static).find(path => {
+          // also consider .ext.lock
+          return path.endsWith('.lock')
         })
-    }
-    if (waitForStatic) {
-      prom = prom.then(() => log(`waiting for ${file} for ${waitForStatic / 1000}s`) || waitForFilePresence(file, waitForStatic))
-    }
-    prom.then(() => {
-      const extname = String(path.extname(req.url.pathname)).toLowerCase()
-      let stream = fs.createReadStream(file).on('error', next)
-      const acceptHeader = req.headers['accept-encoding'] || ''
-      if (compress && acceptHeader.includes('gzip') && compressable.includes(extname)) {
-        res.setHeader('Content-Encoding', 'gzip')
-        stream = stream.pipe(createGzip({}))
+        log(`waiting for ${lockFile} to be removed before serving`)
+        if (hasLockFiles) await delay(100)
       }
-      res.writeHead(200, { 'Content-Type': mimeTypes[extname] || 'application/octet-stream' })
-      stream.pipe(res)
-    }).catch(next)
+    }
+    if (waitForStaticTimeout) {
+      const start = Date.now()
+      let exists  = false
+      while(!exists) {
+        if (Date.now() - start > waitForLockfilesTimeout) {
+          throw new Error(`timed out waiting for file to exist`)
+        }
+        exists = await existsAsync(file)
+        log(`waiting for ${file} to exist before serving`)
+        if (!exists) await delay(100)
+      }
+    }
+    let stream = fs.createReadStream(file).on('error', next)
+    const acceptHeader = req.headers['accept-encoding'] || ''
+    if (compress && acceptHeader.includes('gzip') && isCompressable(file)) {
+      res.setHeader('Content-Encoding', 'gzip')
+      stream = stream.pipe(createGzip({}))
+    }
+    res.writeHead(200, { 'Content-Type': mimeTypes[fileExtension] || 'application/octet-stream' })
+    stream.pipe(res)
   })
 }
 
 server.listen(port)
-console.log('wsb listening on', port)
+console.error('wsb listening on', port)
 
 module.exports = server
