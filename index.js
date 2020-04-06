@@ -205,7 +205,7 @@ if (static) {
       const start = Date.now()
       let exists  = false
       while(!exists) {
-        if (Date.now() - start > waitForLockfilesTimeout) {
+        if (Date.now() - start > waitForStaticTimeout) {
           throw new Error(`timed out waiting for file to exist`)
         }
         exists = await existsAsync(file)
