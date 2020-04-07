@@ -7,6 +7,7 @@ const path = require('path')
 const fs = require('fs')
 const promisify = require('util').promisify
 const accessAsync = promisify(fs.access)
+const readdirAsync = promisify(fs.readdir)
 const mimeTypes = {
     '.html': 'text/html',
     '.js': 'text/javascript',
@@ -188,29 +189,45 @@ if (static) {
     }
     if (waitForLockfilesTimeout) {
       const start = Date.now()
-      let hasLockFiles = true
-      while(hasLockFiles) {
+      let lockFile = true
+      let loggedWaitMessage = false
+      while(lockFile) {
         if (Date.now() - start > waitForLockfilesTimeout) {
           throw new Error(`timed out waiting for lock files to be removed`)
         }
-        hasLockFiles = await readdirAsync(static).find(path => {
+        lockFile = (await readdirAsync(static)).find(path => {
           // also consider .ext.lock
           return path.endsWith('.lock')
         })
-        log(`waiting for ${lockFile} to be removed before serving`)
-        if (hasLockFiles) await delay(100)
+        if (lockFile) {
+          if (!loggedWaitMessage) {
+            log(`waiting for lockfile ${lockFile} to be removed before serving`)
+            loggedWaitMessage = true
+          }
+          await delay(100)
+        } else if (loggedWaitMessage) {
+          log(`lockfile removed, serving ${file}`)
+        }
       }
     }
     if (waitForStaticTimeout) {
       const start = Date.now()
       let exists  = false
+      let loggedWaitMessage = false
       while(!exists) {
         if (Date.now() - start > waitForStaticTimeout) {
           throw new Error(`timed out waiting for file to exist`)
         }
         exists = await existsAsync(file)
-        log(`waiting for ${file} to exist before serving`)
-        if (!exists) await delay(100)
+        if (!exists) {
+          if (!loggedWaitMessage) {
+            log(`waiting for ${file} to exist before serving`)
+            loggedWaitMessage = true
+          }
+          await delay(100)
+        } else if (loggedWaitMessage) {
+          log(`${file} exists, serving it`)
+        }
       }
     }
     let stream = fs.createReadStream(file).on('error', next)
