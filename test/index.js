@@ -9,20 +9,15 @@ const { readFileSync, unlinkSync, writeFileSync } = require("fs");
 
 tmp.setGracefulCleanup();
 
-test.beforeEach((t) => {
-  const tmpDirObject = tmp.dirSync();
-  t.context.tmpDirObject = tmpDirObject;
-  t.context.tmpDir = tmpDirObject.name;
-});
-
-test.afterEach((t) => {
-  t.context.tmpDirObject.removeCallback();
-});
-
 async function sleep(n) {
   await new Promise((r) => setTimeout(r, n));
 }
 
+/**
+ * Repeatedly calls the async function `cb` until it succeeds.
+ * No explicit timeout here as ava will do it for us.
+ *
+ */
 async function retryUntilSuccess(cb) {
   while (true) {
     try {
@@ -33,12 +28,20 @@ async function retryUntilSuccess(cb) {
   }
 }
 
-async function withWsb(args, run) {
+/**
+ * Starts wsb on the command line with the given args.
+ * A port will already be found and configured so doesn't need to be passed.
+ *
+ * cb will be called with a function `requestFile` which is a wrapper around axiox
+ * that can be used to request a file from the server.
+ */
+async function withWsb(args, cb) {
   const port = await getPort();
   const tmpDir = tmp.dirSync();
 
   const proc = fork(join(__dirname, "..", "index.js"), ["-p", port, ...args]);
 
+  // Wrapper around axois that uses the correct port
   const requestFile = (path, options = {}) => {
     return axios
       .get(`http://localhost:${port}/${path}`, options)
@@ -56,17 +59,9 @@ async function withWsb(args, run) {
   })
 
   try {
-    await run(requestFile);
+    await cb(requestFile);
   } finally {
     proc.kill();
-
-    // let server finish
-    await retryUntilSuccess(() => {
-      return requestFile('/wait-until-the-server-loads').then(
-        () => { throw new Error("Still running") },
-        () => "Closed"
-      )
-    })
   }
 }
 
@@ -83,6 +78,22 @@ function getRawHeader(response, headerName) {
   }
   return rawHeaders[nameIndex + 1];
 }
+
+/**
+ * Create a tmp directory for each test to write to and serve
+ */
+test.beforeEach((t) => {
+  const tmpDirObject = tmp.dirSync();
+  t.context.tmpDirObject = tmpDirObject;
+  t.context.tmpDir = tmpDirObject.name;
+});
+
+/**
+ * Cleanup tmp directory
+ */
+test.afterEach((t) => {
+  t.context.tmpDirObject.removeCallback();
+});
 
 test("Serves static assets", async (t) => {
   await withWsb(["--static", t.context.tmpDir], async (requestFile) => {
