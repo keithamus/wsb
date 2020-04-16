@@ -84,7 +84,7 @@ function getRawHeader(response, headerName) {
   return rawHeaders[nameIndex + 1];
 }
 
-test.serial("Serves static assets", async (t) => {
+test("Serves static assets", async (t) => {
   await withWsb(["--static", t.context.tmpDir], async (requestFile) => {
     let response;
 
@@ -106,7 +106,7 @@ test.serial("Serves static assets", async (t) => {
   });
 });
 
-test.serial("Serves compressed assets", async (t) => {
+test("Serves compressed assets", async (t) => {
   await withWsb(
     ["--static", t.context.tmpDir, "--compress"],
     async (requestFile) => {
@@ -157,7 +157,7 @@ test.serial("Serves compressed assets", async (t) => {
   );
 });
 
-test.serial("With wait-for-lockfile", async (t) => {
+test("With wait-for-lockfile", async (t) => {
   await withWsb(
     ["--static", t.context.tmpDir, "--wait-for-lockfile", 500],
     async (requestFile) => {
@@ -200,7 +200,7 @@ test.serial("With wait-for-lockfile", async (t) => {
   );
 });
 
-test.serial("With wait-for-static", async (t) => {
+test("With wait-for-static", async (t) => {
   await withWsb(
     ["--static", t.context.tmpDir, "--wait-for-static", 500],
     async (requestFile) => {
