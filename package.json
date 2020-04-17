@@ -4,6 +4,7 @@
   "bin": {
     "wsb": "./index.js"
   },
+  "files": [],
   "description": "A simple web server that you can broadcast websocket messages with",
   "main": "index.js",
   "dependencies": {
