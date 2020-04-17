@@ -232,11 +232,15 @@ if (static) {
     }
     let stream = fs.createReadStream(file).on('error', next)
     const acceptHeader = req.headers['accept-encoding'] || ''
+    const responseHeaders = {
+      'Content-Type': mimeTypes[fileExtension] || 'application/octet-stream'
+    }
+
     if (compress && acceptHeader.includes('gzip') && isCompressable(file)) {
-      res.setHeader('Content-Encoding', 'gzip')
+      responseHeaders['Content-Encoding'] = 'gzip'
       stream = stream.pipe(createGzip({}))
     }
-    res.writeHead(200, { 'Content-Type': mimeTypes[fileExtension] || 'application/octet-stream' })
+    res.writeHead(200, responseHeaders)
     stream.pipe(res)
   })
 }
