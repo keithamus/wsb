@@ -14,7 +14,7 @@
   "license": "MIT",
   "devDependencies": {
     "ava": "^3.7.0",
-    "axios": "^0.19.2",
+    "axios": "^0.21.1",
     "get-port": "^5.1.1",
     "tmp": "^0.1.0"
   },
